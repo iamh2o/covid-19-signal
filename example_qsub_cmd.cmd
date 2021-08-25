@@ -1,0 +1,1 @@
+snakemake --cluster " qsub -q dev-long -V -pe smp 40   " -kp --configfile config.yaml --cores=800 --conda-frontend mamba  --use-conda --conda-prefix=$PWD/.smk/conda all -j 1000 --conda-base-path /locus/home/jmajor/conda/ --latency-wait 40
