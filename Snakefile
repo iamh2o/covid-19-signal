@@ -58,7 +58,7 @@ except TypeError:
 exec_dir = os.getcwd()
 workdir: os.path.abspath(config['result_dir'])
 
-# get sample names 
+# get sample names
 sample_names = sorted(samples['sample'].drop_duplicates().values)
 
 def get_input_fastq_files(sample_name, r):
@@ -99,6 +99,7 @@ rule host_removed_raw_reads:
     input: expand('{sn}/host_removal/{sn}_R{r}.fastq.gz', sn=sample_names, r=[1,2]),
 
 rule fastqc:
+    threads: 20
     input: expand('{sn}/raw_fastq/{sn}_R{r}_fastqc.html', sn=sample_names, r=[1,2]),
            expand('{sn}/adapter_trimmed/{sn}_R{r}_val_{r}_fastqc.html', sn=sample_names, r=[1,2]),
            expand('{sn}/mapped_clean_reads/{sn}_R{r}_fastqc.html', sn=sample_names, r=[1,2])
@@ -118,14 +119,14 @@ rule breseq:
     input: expand('{sn}/breseq/{sn}_output/index.html', sn=sample_names)
 
 rule freebayes:
-    input: 
+    input:
         expand('{sn}/freebayes/{sn}.consensus.fasta', sn=sample_names),
         expand('{sn}/freebayes/{sn}.variants.norm.vcf', sn=sample_names),
         'freebayes_lineage_assignments.tsv',
         expand('{sn}/freebayes/quast/{sn}_quast_report.html', sn=sample_names),
         expand('{sn}/freebayes/{sn}_consensus_compare.vcf', sn=sample_names)
 
-    
+
 rule coverage:
     input: expand('{sn}/coverage/{sn}_depth.txt', sn=sample_names)
 
@@ -139,11 +140,12 @@ rule quast:
     input: expand('{sn}/quast/{sn}_quast_report.html', sn=sample_names)
 
 rule lineages:
-    input: 
+    input:
         'lineage_assignments.tsv'
 
 rule config_sample_log:
-    input: 
+    threads: 10
+    input:
         config_filename,
         config['samples']
 
@@ -153,6 +155,7 @@ if config['run_breseq'] and config['run_freebayes']:
         print("Invalid BreSeq reference (paramter: breseq_reference) in config file. Please double check and restart")
         exit(1)
     rule variant_calling:
+        threads:40
         input:
             rules.breseq.input,
             rules.ivar_variants.input,
@@ -163,23 +166,27 @@ elif config['run_breseq'] and not config['run_freebayes']:
         print("Invalid BreSeq reference (paramter: breseq_reference) in config file. Please double check and restart")
         exit(1)
     rule variant_calling:
+        threads:40
         input:
             rules.breseq.input,
             rules.ivar_variants.input,
             rules.consensus.input
 elif not config['run_breseq'] and config['run_freebayes']:
     rule variant_calling:
+        threads:40
         input:
             rules.freebayes.input,
             rules.ivar_variants.input,
             rules.consensus.input
 else:
     rule variant_calling:
+        threads:40
         input:
             rules.ivar_variants.input,
             rules.consensus.input
 
 rule all:
+    threads:1
     input:
         rules.raw_read_data_symlinks.input,
         rules.host_removed_raw_reads.input,
@@ -195,7 +202,8 @@ rule all:
         rules.lineages.input
 
 rule postprocess:
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/postprocessing.yaml'
     params:
         sample_csv_filename = os.path.join(exec_dir, config['samples']),
@@ -206,6 +214,7 @@ rule postprocess:
 
 rule ncov_tools:
     # can't use the one in the ncov-tool dir as it has to include snakemake
+    threads: 40
     conda:
         'ncov-tools/workflow/envs/environment.yml'
     params:
@@ -223,12 +232,13 @@ rule ncov_tools:
         bams = expand("{sn}/core/{sn}_viral_reference.mapping.bam", sn=sample_names),
         variants = expand("{sn}/core/{sn}_ivar_variants.tsv", sn=sample_names)
     script: "scripts/ncov-tools.py"
-        
-        
+
+
 ################################# Copy config and sample table to output folder ##################
 
 rule copy_config_sample_log:
-    output: 
+    threads: 40
+    output:
         config = os.path.basename(config_filename),
         sample_table=config["samples"]
     input:
@@ -243,6 +253,7 @@ rule copy_config_sample_log:
 #################################   Based on scripts/assemble.sh   #################################
 
 rule link_raw_data:
+    threads: 30
     priority: 4
     output:
         '{sn}/raw_fastq/{sn}_R{r}.fastq.gz'
@@ -252,6 +263,7 @@ rule link_raw_data:
         'ln -s {input} {output}'
 
 rule concat_and_sort:
+    threads:20
     priority: 4
     output:
         '{sn}/raw_fastq/{sn}_R{r}.fastq.gz'
@@ -263,7 +275,8 @@ rule concat_and_sort:
         'if [ $(echo {input} | wc -w) -gt 1 ]; then zcat -f {input} | paste - - - - | sort -k1,1 -t " " | tr "\\t" "\\n" | gzip > {output}; else ln -s {input} {output}; fi'
 
 rule run_raw_fastqc:
-    conda: 
+    threads:40
+    conda:
         'conda_envs/trim_qc.yaml'
     output:
         r1_fastqc = '{sn}/raw_fastq/{sn}_R1_fastqc.html',
@@ -279,14 +292,14 @@ rule run_raw_fastqc:
         '{sn}/raw_fastq/{sn}_fastqc.log'
     shell:
         """
-        fastqc -o {params.output_prefix} {input} 2> {log}
+        fastqc -t {threads} -o {params.output_prefix} {input} 2> {log}
         """
 
 ########################## Human Host Removal ################################
 
 rule raw_reads_composite_reference_bwa_map:
-    threads: 2
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/snp_mapping.yaml'
     output:
         '{sn}/host_removal/{sn}_viral_and_nonmapping_reads.bam',
@@ -307,7 +320,7 @@ rule raw_reads_composite_reference_bwa_map:
         '{params.script_path} -c {params.viral_contig_name} > {output}) 2> {log}'
 
 rule get_host_removed_reads:
-    threads: 2
+    threads: 40
     conda: 'conda_envs/snp_mapping.yaml'
     output:
         r1 = '{sn}/host_removal/{sn}_R1.fastq.gz',
@@ -323,15 +336,15 @@ rule get_host_removed_reads:
     shell:
         """
         samtools view -b {input} | samtools sort -n -@{threads} > {output.bam} 2> {log}
-        samtools fastq -1 {output.r1} -2 {output.r2} -s {output.s} {output.bam} 2>> {log} 
+        samtools fastq -1 {output.r1} -2 {output.r2} -s {output.s} {output.bam} 2>> {log}
         """
 
 ###### Based on github.com/connor-lab/ncov2019-artic-nf/blob/master/modules/illumina.nf#L124 ######
 
 rule run_trimgalore:
-    threads: 2
+    threads: 40
     priority: 2
-    conda: 
+    conda:
         'conda_envs/trim_qc.yaml'
     output:
         '{sn}/adapter_trimmed/{sn}_R1_val_1.fq.gz',
@@ -355,9 +368,9 @@ rule run_trimgalore:
         '--paired {input.raw_r1} {input.raw_r2} 2> {log}'
 
 rule run_filtering_of_residual_adapters:
-    threads: 2
+    threads: 40
     priority: 2
-    conda: 
+    conda:
         'conda_envs/snp_mapping.yaml'
     input:
         r1 = '{sn}/adapter_trimmed/{sn}_R1_val_1.fq.gz',
@@ -371,9 +384,10 @@ rule run_filtering_of_residual_adapters:
         """
         python {params.script_path} --input_R1 {input.r1} --input_R2 {input.r2}
         """
-       
+
 rule viral_reference_bwa_build:
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/snp_mapping.yaml'
     output:
         '{sn}/core/viral_reference.bwt'
@@ -390,8 +404,8 @@ rule viral_reference_bwa_build:
 
 
 rule viral_reference_bwa_map:
-    threads: 2
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/snp_mapping.yaml'
     output:
         '{sn}/core/{sn}_viral_reference.bam'
@@ -412,7 +426,8 @@ rule viral_reference_bwa_map:
 
 
 rule run_bed_primer_trim:
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/ivar.yaml'
     input:
         "{sn}/core/{sn}_viral_reference.bam"
@@ -442,6 +457,7 @@ rule run_bed_primer_trim:
 
 
 rule run_fastqc_on_mapped_reads:
+    threads: 40
     conda: 'conda_envs/trim_qc.yaml'
     output:
         r1_fastqc = '{sn}/mapped_clean_reads/{sn}_R1_fastqc.html',
@@ -461,6 +477,7 @@ rule run_fastqc_on_mapped_reads:
         """
 
 rule get_mapping_reads:
+    threads: 40
     priority: 2
     conda: 'conda_envs/snp_mapping.yaml'
     output:
@@ -477,11 +494,12 @@ rule get_mapping_reads:
     shell:
         """
         samtools sort -n {input} -o {output.bam} 2> {log}
-        samtools fastq -1 {output.r1} -2 {output.r2} -s {output.s} {output.bam} 2>> {log} 
+        samtools fastq -1 {output.r1} -2 {output.r2} -s {output.s} {output.bam} 2>> {log}
         """
 
 rule run_ivar_consensus:
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/ivar.yaml'
     output:
         '{sn}/core/{sn}.consensus.fa'
@@ -503,11 +521,12 @@ rule run_ivar_consensus:
         '2>{log}'
 
 rule index_viral_reference:
-    # from @jts both mpileup and ivar need a reference .fai file and will create 
-    # it when it doesn't exist. 
-    # When they're run in a pipe like mpileup | ivar there's a race condition 
+    # from @jts both mpileup and ivar need a reference .fai file and will create
+    # it when it doesn't exist.
+    # When they're run in a pipe like mpileup | ivar there's a race condition
     # that causes the error
-    conda: 
+    threads:40
+    conda:
         'conda_envs/ivar.yaml'
     output:
         os.path.join(exec_dir, config['viral_reference_genome']) + ".fai"
@@ -518,7 +537,8 @@ rule index_viral_reference:
 
 
 rule run_ivar_variants:
-    conda: 
+    threads: 40
+    conda:
         'conda_envs/ivar.yaml'
     output:
         '{sn}/core/{sn}_ivar_variants.tsv'
@@ -547,7 +567,7 @@ rule run_ivar_variants:
 ################################   Based on scripts/breseq.sh   ####################################
 
 rule run_breseq:
-    threads: 4
+    threads: 44
     priority: 1
     conda: 'conda_envs/snp_mapping.yaml'
     output:
@@ -572,7 +592,7 @@ rule run_breseq:
 ################## Based on https://github.com/jts/ncov2019-artic-nf/blob/be26baedcc6876a798a599071bb25e0973261861/modules/illumina.nf ##################
 
 rule run_freebayes:
-    threads: 1
+    threads: 40
     priority: 1
     conda: 'conda_envs/freebayes.yaml'
     output:
@@ -608,27 +628,27 @@ rule run_freebayes:
                         -u {params.freebayes_freq_threshold} \
                         -m {params.out}.mask.txt \
                         -v {params.out}.variants.vcf \
-                        -c {params.out}.consensus.vcf {params.out}.gvcf 
+                        -c {params.out}.consensus.vcf {params.out}.gvcf
 
         # normalize variant records into canonical VCF representation
-        bcftools norm -f {input.reference} {params.out}.variants.vcf > {output.variants} 
+        bcftools norm -f {input.reference} {params.out}.variants.vcf > {output.variants}
         bcftools norm -f {input.reference} {params.out}.consensus.vcf > {params.out}.consensus.norm.vcf
 
         # split the consensus sites file into a set that should be IUPAC codes and all other bases, using the ConsensusTag in the VCF
         for vt in "ambiguous" "fixed"; do
             cat {params.out}.consensus.norm.vcf | awk -v vartag=ConsensusTag=$vt '$0 ~ /^#/ || $0 ~ vartag' > {params.out}.$vt.norm.vcf
-            bgzip -f {params.out}.$vt.norm.vcf  
-            tabix -f -p vcf {params.out}.$vt.norm.vcf.gz 
+            bgzip -f {params.out}.$vt.norm.vcf
+            tabix -f -p vcf {params.out}.$vt.norm.vcf.gz
         done
-        
+
         # apply ambiguous variants first using IUPAC codes. this variant set cannot contain indels or the subsequent step will break
-        bcftools consensus -f {input.reference} -I {params.out}.ambiguous.norm.vcf.gz > {params.out}.ambiguous.fasta 
+        bcftools consensus -f {input.reference} -I {params.out}.ambiguous.norm.vcf.gz > {params.out}.ambiguous.fasta
         # apply remaninng variants, including indels
         bcftools consensus -f {params.out}.ambiguous.fasta -m {params.out}.mask.txt {params.out}.fixed.norm.vcf.gz | sed s/MN908947\.3.*/{wildcards.sn}/ > {output.consensus}
         """
 
 rule consensus_compare:
-    threads: 1
+    threads: 40
     priority: 1
     conda: 'conda_envs/freebayes.yaml'
     output:
@@ -647,6 +667,7 @@ rule consensus_compare:
 
 
 rule coverage_depth:
+    threads: 40
     conda: 'conda_envs/snp_mapping.yaml'
     output:
         '{sn}/coverage/{sn}_depth.txt'
@@ -658,9 +679,10 @@ rule coverage_depth:
         'bedtools genomecov -d -ibam {input} > {output}'
 
 rule generate_coverage_plot:
+    threads: 40
     conda: 'conda_envs/postprocessing.yaml'
-    output: 
-        '{sn}/coverage/{sn}_coverage_plot.png' 
+    output:
+        '{sn}/coverage/{sn}_coverage_plot.png'
     input:
         '{sn}/coverage/{sn}_depth.txt'
     params:
@@ -672,7 +694,7 @@ rule generate_coverage_plot:
 
 
 rule run_kraken2:
-    threads: 1
+    threads: 40
     conda: 'conda_envs/trim_qc.yaml'
     output:
         '{sn}/kraken2/{sn}_kraken2.out'
@@ -708,7 +730,7 @@ rule run_kraken2:
 
 
 rule run_quast:
-    threads: 1
+    threads: 40
     conda: 'conda_envs/assembly_qc.yaml'
     output:
          '{sn}/quast/{sn}_quast_report.html'
@@ -729,7 +751,7 @@ rule run_quast:
          'for f in {params.unlabelled_reports}; do mv $f ${{f/report/{params.sample_name}}}; done'
 
 rule run_quast_freebayes:
-    threads: 1
+    threads: 40
     conda: 'conda_envs/assembly_qc.yaml'
     output:
          '{sn}/freebayes/quast/{sn}_quast_report.html'
@@ -750,7 +772,7 @@ rule run_quast_freebayes:
          'for f in {params.unlabelled_reports}; do mv $f ${{f/report/{params.sample_name}}}; done'
 
 rule run_lineage_assignment:
-    threads: 4
+    threads: 40
     conda: 'conda_envs/assign_lineages.yaml'
     output:
         'lineage_assignments.tsv'
@@ -763,7 +785,7 @@ rule run_lineage_assignment:
         '{params.assignment_script_path} -i all_genomes.fa -t {threads} -o {output}'
 
 rule run_lineage_assignment_freebayes:
-    threads: 4
+    threads: 40
     conda: 'conda_envs/assign_lineages.yaml'
     output:
         'freebayes_lineage_assignments.tsv'
