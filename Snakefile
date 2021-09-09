@@ -298,7 +298,7 @@ rule run_raw_fastqc:
 ########################## Human Host Removal ################################
 
 rule raw_reads_composite_reference_bwa_map:
-    threads: 40
+    threads: 88
     conda:
         'conda_envs/snp_mapping.yaml'
     output:
@@ -320,7 +320,7 @@ rule raw_reads_composite_reference_bwa_map:
         '{params.script_path} -c {params.viral_contig_name} > {output}) 2> {log}'
 
 rule get_host_removed_reads:
-    threads: 40
+    threads: 80
     conda: 'conda_envs/snp_mapping.yaml'
     output:
         r1 = '{sn}/host_removal/{sn}_R1.fastq.gz',
@@ -368,7 +368,7 @@ rule run_trimgalore:
         '--paired {input.raw_r1} {input.raw_r2} 2> {log}'
 
 rule run_filtering_of_residual_adapters:
-    threads: 40
+    threads: 20
     priority: 2
     conda:
         'conda_envs/snp_mapping.yaml'
@@ -404,7 +404,7 @@ rule viral_reference_bwa_build:
 
 
 rule viral_reference_bwa_map:
-    threads: 40
+    threads: 88
     conda:
         'conda_envs/snp_mapping.yaml'
     output:
@@ -422,7 +422,7 @@ rule viral_reference_bwa_map:
     shell:
         '(bwa mem -t {threads} {params.ref_prefix} '
         '{input.r1} {input.r2} | '
-        'samtools view -bS | samtools sort -@{threads} -o {output}) 2> {log}'
+        'samtools view -@ {threads} -bS | samtools sort -@{threads} -o {output}) 2> {log}'
 
 
 rule run_bed_primer_trim:
@@ -446,13 +446,13 @@ rule run_bed_primer_trim:
         min_qual = config['min_qual'],
         primer_pairs = config['primer_pairs_tsv']
     shell:
-        'samtools view -F4 -o {output.mapped_bam} {input}; '
-        'samtools index {output.mapped_bam}; '
+        'samtools view -@ {threads} -F4 -o {output.mapped_bam} {input}; '
+        'samtools index -@ {threads} {output.mapped_bam}; '
         'ivar trim -e -i {output.mapped_bam} -b {params.scheme_bed} '
         '-m {params.min_len} -q {params.min_qual} '
         '{params.primer_pairs} '
         '-p {params.ivar_output_prefix} 2> {log}; '
-        'samtools sort -o {output.sorted_trimmed_mapped_bam} '
+        'samtools sort -@ {threads} -o {output.sorted_trimmed_mapped_bam} '
         '{output.trimmed_mapped_bam}'
 
 
@@ -493,8 +493,8 @@ rule get_mapping_reads:
         '{sn}/mapped_clean_reads/{sn}_samtools_fastq.log'
     shell:
         """
-        samtools sort -n {input} -o {output.bam} 2> {log}
-        samtools fastq -1 {output.r1} -2 {output.r2} -s {output.s} {output.bam} 2>> {log}
+        samtools sort -@ {threads} -n {input} -o {output.bam} 2> {log}
+        samtools fastq -@ {threads} -1 {output.r1} -2 {output.r2} -s {output.s} {output.bam} 2>> {log}
         """
 
 rule run_ivar_consensus:
@@ -642,7 +642,7 @@ rule run_freebayes:
         done
 
         # apply ambiguous variants first using IUPAC codes. this variant set cannot contain indels or the subsequent step will break
-        bcftools consensus -f {input.reference} -I {params.out}.ambiguous.norm.vcf.gz > {params.out}.ambiguous.fasta
+        bcftools consensus -@ {threads} -f {input.reference} -I {params.out}.ambiguous.norm.vcf.gz > {params.out}.ambiguous.fasta
         # apply remaninng variants, including indels
         bcftools consensus -f {params.out}.ambiguous.fasta -m {params.out}.mask.txt {params.out}.fixed.norm.vcf.gz | sed s/MN908947\.3.*/{wildcards.sn}/ > {output.consensus}
         """
