@@ -88,6 +88,8 @@ else:
     ruleorder: link_raw_data > concat_and_sort
 
 ######################################   High-level targets   ######################################
+report: "results_dir/workflow.rst"
+
 rule raw_read_data_symlinks:
     input: expand('{sn}/raw_fastq/{sn}_R{r}.fastq.gz', sn=sample_names, r=[1,2])
 
